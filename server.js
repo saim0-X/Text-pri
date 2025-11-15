@@ -1,128 +1,108 @@
-const express = require("express");
-const chromium = require("chrome-aws-lambda");
-const puppeteer = require("puppeteer-core");
+import express from "express";
+import axios from "axios";
+import cheerio from "cheerio";
+import FormData from "form-data";
 
 const app = express();
-app.use(express.json());
+const PORT = process.env.PORT || 3000;
 
-// Template mapping (5 templates)
+// =====================
+// Templates mapping
+// =====================
 const TEMPLATES = {
-  "1": "https://textpro.me/create-glitch-text-effect-online-1028.html",
-  "2": "https://textpro.me/create-neon-light-text-effect-online-882.html",
-  "3": "https://textpro.me/create-3d-gradient-text-effect-online-1005.html",
-  "4": "https://textpro.me/create-blackpink-logo-style-online-1001.html",
-  "5": "https://textpro.me/create-multicolor-3d-text-effect-online-975.html"
+  "1": "https://textpro.me/create-neon-light-text-effect-online-882.html",
+  "2": "https://textpro.me/create-glossy-metal-text-effect-online-188.html",
+  "3": "https://textpro.me/3d-box-text-effect-online-880.html",
+  "4": "https://textpro.me/create-gradient-text-effect-online-999.html",
+  "5": "https://textpro.me/create-blackpink-logo-style-online-1132.html"
 };
 
+// =====================
+// Scraping & Generate function
+// =====================
+async function generateTextPro(id, text) {
+  const url = TEMPLATES[id];
+  if (!url) throw new Error("Invalid template ID");
+
+  // STEP 1 — Load template page
+  const page = await axios.get(url, { headers: { "User-Agent": "Mozilla/5.0" } });
+  const cookie = page.headers["set-cookie"]?.join("; ") || "";
+  const $ = cheerio.load(page.data);
+
+  // Hidden form values
+  const token = $('input[name="token"]').val();
+  const buildServer = $('input[name="build_server"]').val();
+  const buildServerId = $('input[name="build_server_id"]').val();
+  const submit = $('input[name="submit"]').val();
+
+  if (!token) throw new Error("Token not found — parsing failed");
+
+  // STEP 2 — Prepare form
+  const form = new FormData();
+  form.append("text[]", text);
+  form.append("submit", submit);
+  form.append("token", token);
+  form.append("build_server", buildServer);
+  form.append("build_server_id", buildServerId);
+
+  // STEP 3 — POST form
+  const postPage = await axios.post(url, form, {
+    headers: {
+      ...form.getHeaders(),
+      Cookie: cookie,
+      "User-Agent": "Mozilla/5.0"
+    }
+  });
+
+  const $2 = cheerio.load(postPage.data);
+  const formValue =
+    $2("#form_value").text() ||
+    $2("#form_value_input").text() ||
+    $2("#form_value").val();
+
+  if (!formValue) throw new Error("form_value not found");
+
+  // STEP 4 — Generate final image
+  const create = await axios.post(
+    new URL("/effect/create-image", url).href,
+    JSON.parse(formValue),
+    {
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8",
+        Cookie: cookie,
+        "User-Agent": "Mozilla/5.0"
+      }
+    }
+  );
+
+  return buildServer + (create.data?.fullsize_image || create.data?.image);
+}
+
+// =====================
+// API Route
+// =====================
 app.get("/api/textpro", async (req, res) => {
-  const id = req.query.id;
-  const text = req.query.text;
+  const { id, text } = req.query;
 
-  if (!id || !TEMPLATES[id]) {
-    return res.status(400).json({ error: "Invalid or missing id" });
-  }
-  if (!text) {
-    return res.status(400).json({ error: "Missing text parameter" });
-  }
-
-  const templateUrl = TEMPLATES[id];
-  let browser;
+  if (!id || !text)
+    return res.status(400).json({
+      error: "Missing ?id= & ?text="
+    });
 
   try {
-    browser = await puppeteer.launch({
-      args: chromium.args,
-      executablePath: await chromium.executablePath,
-      headless: chromium.headless
-    });
-
-    const page = await browser.newPage();
-    await page.setUserAgent("Mozilla/5.0");
-
-    await page.goto(templateUrl, { waitUntil: "networkidle2" });
-
-    // Splitting multi-text (example: a|b)
-    const parts = text.split("|");
-    const inputs = await page.$$('[name="text[]"], input[type=text], textarea');
-
-    if (inputs.length === 0) {
-      return res.status(500).json({ error: "Input field not found" });
-    }
-
-    for (let i = 0; i < parts.length && i < inputs.length; i++) {
-      await inputs[i].click({ clickCount: 3 });
-      await inputs[i].type(parts[i], { delay: 20 });
-    }
-
-    // Click create button
-    const selectors = [
-      "button[type=submit]",
-      ".btn-create",
-      "#submit",
-      ".create-button"
-    ];
-
-    let clicked = false;
-    for (const sel of selectors) {
-      const btn = await page.$(sel);
-      if (btn) {
-        await btn.click();
-        clicked = true;
-        break;
-      }
-    }
-
-    if (!clicked) {
-      await page.evaluate(() => {
-        const btn = [...document.querySelectorAll("button")].find(b =>
-          /create|generate|make/i.test(b.innerText)
-        );
-        if (btn) btn.click();
-      });
-    }
-
-    await page.waitForTimeout(3000);
-
-    // Find output image
-    const imageUrl = await page.evaluate(() => {
-      const imgs = [...document.images].filter(
-        i => i.src && i.width > 200 && !i.src.includes("spinner")
-      );
-      if (imgs.length === 0) return null;
-
-      let largest = imgs[0];
-      for (const img of imgs) {
-        if (
-          img.naturalWidth * img.naturalHeight >
-          largest.naturalWidth * largest.naturalHeight
-        ) {
-          largest = img;
-        }
-      }
-      return largest.src;
-    });
-
-    await browser.close();
-
-    if (!imageUrl) {
-      return res.status(500).json({ error: "Failed to generate image" });
-    }
-
-    return res.json({
-      status: "success",
+    const image = await generateTextPro(id, text);
+    res.json({
+      status: true,
       template_id: id,
-      url: imageUrl
+      input: text,
+      image
     });
-
   } catch (err) {
-    if (browser) await browser.close();
-    return res.status(500).json({ error: "Error", details: err.message });
+    res.status(500).json({
+      status: false,
+      error: err.message
+    });
   }
 });
 
-app.get("/", (req, res) => {
-  res.send("TextPro API is running.");
-});
-
-app.listen(process.env.PORT || 3000, () =>
-  console.log("Server running...")
-);
+app.listen(PORT, () => console.log("TextPro API running on PORT " + PORT));
