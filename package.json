@@ -2,12 +2,14 @@
   "name": "textpro-api",
   "version": "1.0.0",
   "main": "server.js",
+  "type": "module",
   "scripts": {
     "start": "node server.js"
   },
   "dependencies": {
-    "express": "^4.18.2",
-    "puppeteer-core": "^22.0.0",
-    "chrome-aws-lambda": "^10.1.0"
+    "axios": "^1.6.0",
+    "cheerio": "^1.0.0",
+    "form-data": "^4.0.0",
+    "express": "^4.18.2"
   }
 }
