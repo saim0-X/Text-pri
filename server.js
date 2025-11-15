@@ -1,7 +1,7 @@
 import express from "express";
 import axios from "axios";
-import cheerio from "cheerio";
 import FormData from "form-data";
+import { load } from "cheerio"; // ✅ esm-compatible
 
 const app = express();
 const PORT = process.env.PORT || 3000;
@@ -27,7 +27,7 @@ async function generateTextPro(id, text) {
   // STEP 1 — Load template page
   const page = await axios.get(url, { headers: { "User-Agent": "Mozilla/5.0" } });
   const cookie = page.headers["set-cookie"]?.join("; ") || "";
-  const $ = cheerio.load(page.data);
+  const $ = load(page.data);
 
   // Hidden form values
   const token = $('input[name="token"]').val();
@@ -54,7 +54,7 @@ async function generateTextPro(id, text) {
     }
   });
 
-  const $2 = cheerio.load(postPage.data);
+  const $2 = load(postPage.data);
   const formValue =
     $2("#form_value").text() ||
     $2("#form_value_input").text() ||
